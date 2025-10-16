@@ -23,7 +23,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install cxxfilt
 
-      - name: Demangle all .txt recursively and write .dec.txt
+      - name: Demangle all .txt recursively and write .dec.txt and .decd.txt
         run: |
           python - <<'PY'
           import re
@@ -36,12 +36,13 @@ jobs:
           # Conservative regex: start at _Z and take until whitespace or common separators.
           pattern = re.compile(r'(_Z[^\s,;()\[\]\\"\'<>]+)')
 
-          produced = []
+          produced_dec = []
+          produced_decd = []
           errors = []
 
           for p in sorted(root.rglob('*.txt')):
-              # Skip files that are already demangled outputs (i.e. already *.dec.txt)
-              if p.name.endswith('.dec.txt'):
+              # Skip files that are already demangled outputs (i.e. already *.dec.txt or *.decd.txt)
+              if p.name.endswith('.dec.txt') or p.name.endswith('.decd.txt'):
                   continue
               try:
                   text = p.read_text(encoding='utf-8', errors='ignore')
@@ -50,9 +51,11 @@ jobs:
                   continue
 
               matches = [m.group(1) for m in pattern.finditer(text)]
-              outname = p.with_name(p.stem + '.dec.txt')
+              
+              # For .dec.txt (mangled | demangled)
+              outname_dec = p.with_name(p.stem + '.dec.txt')
               try:
-                  with outname.open('w', encoding='utf-8', errors='ignore') as fo:
+                  with outname_dec.open('w', encoding='utf-8', errors='ignore') as fo:
                       fo.write("Mangled Name | Demangled Name\n")
                       fo.write("------------- | --------------\n")
                       for m in matches:
@@ -61,17 +64,38 @@ jobs:
                           except Exception as e:
                               dem = f"<demangle_error: {e}>"
                           fo.write(f"{m} | {dem}\n")
-                  produced.append(str(outname))
+                  produced_dec.append(str(outname_dec))
               except Exception as e:
-                  errors.append(f"WRITE_ERROR: {outname}: {e}")
+                  errors.append(f"WRITE_ERROR: {outname_dec}: {e}")
+              
+              # For .decd.txt (demangled only)
+              outname_decd = p.with_name(p.stem + '.decd.txt')
+              try:
+                  with outname_decd.open('w', encoding='utf-8', errors='ignore') as fo:
+                      for m in matches:
+                          try:
+                              dem = cxxfilt.demangle(m)
+                          except Exception as e:
+                              dem = f"<demangle_error: {e}>"
+                          fo.write(f"{dem}\n")
+                  produced_decd.append(str(outname_decd))
+              except Exception as e:
+                  errors.append(f"WRITE_ERROR: {outname_decd}: {e}")
 
           # Report
-          if produced:
+          if produced_dec:
               print("Produced .dec.txt files:")
-              for f in produced:
+              for f in produced_dec:
                   print(" -", f)
           else:
               print("No .txt files found to process (or all were already .dec.txt).")
+
+          if produced_decd:
+              print("Produced .decd.txt files:")
+              for f in produced_decd:
+                  print(" -", f)
+          else:
+              print("No .txt files found to process (or all were already .decd.txt).")
 
           if errors:
               print("\nErrors encountered:", file=sys.stderr)
@@ -79,21 +103,35 @@ jobs:
                   print(" -", e, file=sys.stderr)
           PY
 
-      - name: List produced .dec.txt and preview
+      - name: List produced .dec.txt and .decd.txt and preview
         run: |
           shopt -s globstar nullglob
-          files=( **/*.dec.txt )
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No .dec.txt files produced."
+          files_dec=( **/*.dec.txt )
+          files_decd=( **/*.decd.txt )
+          total_files=$(( ${#files_dec[@]} + ${#files_decd[@]} ))
+          if [ $total_files -eq 0 ]; then
+            echo "No .dec.txt or .decd.txt files produced."
             exit 0
           fi
-          echo "Produced ${#files[@]} .dec.txt files:"
-          for f in "${files[@]}"; do
-            ls -l "$f"
-          done
+          if [ ${#files_dec[@]} -gt 0 ]; then
+            echo "Produced ${#files_dec[@]} .dec.txt files:"
+            for f in "${files_dec[@]}"; do
+              ls -l "$f"
+            done
+          fi
+          if [ ${#files_decd[@]} -gt 0 ]; then
+            echo "Produced ${#files_decd[@]} .decd.txt files:"
+            for f in "${files_decd[@]}"; do
+              ls -l "$f"
+            done
+          fi
           echo ""
-          echo "Preview: first 20 lines of each produced .dec.txt (or until EOF):"
-          for f in "${files[@]}"; do
+          echo "Preview: first 20 lines of each produced .dec.txt and .decd.txt (or until EOF):"
+          for f in "${files_dec[@]}"; do
+            echo "---- $f ----"
+            head -n 20 "$f" || true
+          done
+          for f in "${files_decd[@]}"; do
             echo "---- $f ----"
             head -n 20 "$f" || true
           done
@@ -101,12 +139,14 @@ jobs:
       - name: Create demangled_outputs.zip (if any)
         run: |
           shopt -s globstar nullglob
-          files=( **/*.dec.txt )
-          if [ ${#files[@]} -gt 0 ]; then
-            zip -r demangled_outputs.zip "${files[@]}"
-            echo "Created demangled_outputs.zip containing ${#files[@]} files."
+          files_dec=( **/*.dec.txt )
+          files_decd=( **/*.decd.txt )
+          total_files=$(( ${#files_dec[@]} + ${#files_decd[@]} ))
+          if [ $total_files -gt 0 ]; then
+            zip -r demangled_outputs.zip "${files_dec[@]}" "${files_decd[@]}"
+            echo "Created demangled_outputs.zip containing $total_files files."
           else
-            echo "No .dec.txt files to zip."
+            echo "No .dec.txt or .decd.txt files to zip."
           fi
 
       - name: Upload artifact (zip only to avoid duplication)
