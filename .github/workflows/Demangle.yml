@@ -26,42 +26,38 @@ jobs:
       - name: Demangle files and produce .dec.txt
         run: |
           cat > demangle.py <<'PY'
-import re, sys
-from pathlib import Path
-import cxxfilt
-
-files = [
-  "7.0gui.arm64.txt",
-  "7.0gui.arm32.txt",
-  "7.0ui.arm32.txt",
-  "7.0ui.arm64.txt"
-]
-
-pattern = re.compile(r'(_Z[\w\d_@:\.\$\-\<\>]+)')
-out_files = []
-
-for fname in files:
-    p = Path(fname)
-    if not p.is_file():
-        continue
-    text = p.read_text(encoding='utf-8', errors='ignore')
-    matches = [m.group(1) for m in pattern.finditer(text)]
-    outname = p.with_name(p.stem + ".dec.txt")
-    out_files.append(str(outname))
-    with outname.open("w", encoding='utf-8', errors='ignore') as f:
-        for m in matches:
+           import re, sys
+           from pathlib import Path
+           import cxxfilt
+           files = [
+             "7.0gui.arm64.txt",
+             "7.0gui.arm32.txt",
+             "7.0ui.arm32.txt",
+             "7.0ui.arm64.txt"
+           ]
+          pattern = re.compile(r'(_Z[\w\d_@:\.\$\-\<\>]+)')
+          out_files = []
+           for fname in files:
+              p = Path(fname)
+           if not p.is_file():
+            continue
+           text = p.read_text(encoding='utf-8', errors='ignore')
+           matches = [m.group(1) for m in pattern.finditer(text)]
+           outname = p.with_name(p.stem + ".dec.txt")
+           out_files.append(str(outname))
+          with outname.open("w", encoding='utf-8', errors='ignore') as f:
+          for m in matches:
             try:
                 dem = cxxfilt.demangle(m)
             except Exception as e:
                 dem = f"<demangle_error:{e}>"
-            f.write(f"{m}={dem}\n")
-
-if not out_files:
-    print("No input files found; nothing produced.", file=sys.stderr)
-    sys.exit(0)
-print("Produced:", out_files)
-PY
-          python demangle.py
+                f.write(f"{m}={dem}\n")
+                if not out_files:
+                print("No input files found; nothing produced.", file=sys.stderr)
+                sys.exit(0)
+                print("Produced:", out_files)
+                PY
+                python demangle.py
 
       - name: Create zip of outputs
         run: |
