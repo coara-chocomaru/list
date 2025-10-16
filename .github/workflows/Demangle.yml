@@ -1,0 +1,77 @@
+name: Demangle and upload artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  demangle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install python demangler
+        run: |
+          python -m pip install --upgrade pip
+          pip install cxxfilt
+
+      - name: Demangle files and produce .dec.txt
+        run: |
+          cat > demangle.py <<'PY'
+import re, sys
+from pathlib import Path
+import cxxfilt
+
+files = [
+  "7.0gui.arm64.txt",
+  "7.0gui.arm32.txt",
+  "7.0ui.arm32.txt",
+  "7.0ui.arm64.txt"
+]
+
+pattern = re.compile(r'(_Z[\w\d_@:\.\$\-\<\>]+)')
+out_files = []
+
+for fname in files:
+    p = Path(fname)
+    if not p.is_file():
+        continue
+    text = p.read_text(encoding='utf-8', errors='ignore')
+    matches = [m.group(1) for m in pattern.finditer(text)]
+    outname = p.with_name(p.stem + ".dec.txt")
+    out_files.append(str(outname))
+    with outname.open("w", encoding='utf-8', errors='ignore') as f:
+        for m in matches:
+            try:
+                dem = cxxfilt.demangle(m)
+            except Exception as e:
+                dem = f"<demangle_error:{e}>"
+            f.write(f"{m}={dem}\n")
+
+if not out_files:
+    print("No input files found; nothing produced.", file=sys.stderr)
+    sys.exit(0)
+print("Produced:", out_files)
+PY
+          python demangle.py
+
+      - name: Create zip of outputs
+        run: |
+          ls -1 *.dec.txt 2>/dev/null || true
+          zip -r demangled_outputs.zip *.dec.txt || true
+
+      - name: Upload artifact (zip + .dec.txt)
+        uses: actions/upload-artifact@v4
+        with:
+          name: demangled-outputs
+          path: |
+            demangled_outputs.zip
+            *.dec.txt
