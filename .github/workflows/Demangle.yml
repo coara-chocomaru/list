@@ -1,4 +1,4 @@
-name: Demangle and upload artifacts
+name: Demangle all TXT and upload artifacts
 
 on:
   workflow_dispatch:
@@ -13,75 +13,96 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python 3.11
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Install python demangler
+      - name: Install Python demangler
         run: |
           python -m pip install --upgrade pip
           pip install cxxfilt
 
-      - name: Demangle files (produce .dec.txt)
+      - name: Demangle all .txt recursively and write .dec.txt
         run: |
           python - <<'PY'
           import re
           from pathlib import Path
           import cxxfilt
+          import sys
 
-          # input file candidates (in repository root)
-          files = [
-              "7.0gui.arm64.txt",
-              "7.0gui.arm32.txt",
-              "7.0ui.arm32.txt",
-              "7.0ui.arm64.txt",
-          ]
+          root = Path('.')
 
-          # regex to capture likely Itanium mangled names starting with _Z
-          pattern = re.compile(r'(_Z[^\s,;()\[\]"\']+)')
+          # Conservative regex: start at _Z and take until whitespace or common separators.
+          pattern = re.compile(r'(_Z[^\s,;()\[\]\\"\'<>]+)')
 
           produced = []
-          for fname in files:
-              p = Path(fname)
-              if not p.is_file():
-                  continue
-              text = p.read_text(encoding='utf-8', errors='ignore')
-              matches = [m.group(1) for m in pattern.finditer(text)]
-              outname = p.with_suffix('.dec.txt')  # e.g. 7.0gui.arm64.dec.txt
-              with outname.open('w', encoding='utf-8', errors='ignore') as fo:
-                  for m in matches:
-                      try:
-                          dem = cxxfilt.demangle(m)
-                      except Exception as e:
-                          dem = f"<demangle_error:{e}>"
-                      fo.write(f"{m}={dem}\n")
-              produced.append(str(outname))
+          errors = []
 
+          for p in sorted(root.rglob('*.txt')):
+              # Skip files that are already demangled outputs (i.e. already *.dec.txt)
+              if p.name.endswith('.dec.txt'):
+                  continue
+              try:
+                  text = p.read_text(encoding='utf-8', errors='ignore')
+              except Exception as e:
+                  errors.append(f"READ_ERROR: {p}: {e}")
+                  continue
+
+              matches = [m.group(1) for m in pattern.finditer(text)]
+              outname = p.with_name(p.stem + '.dec.txt')
+              try:
+                  with outname.open('w', encoding='utf-8', errors='ignore') as fo:
+                      for m in matches:
+                          try:
+                              dem = cxxfilt.demangle(m)
+                          except Exception as e:
+                              dem = f"<demangle_error:{e}>"
+                          fo.write(f"{m}={dem}\n")
+                  produced.append(str(outname))
+              except Exception as e:
+                  errors.append(f"WRITE_ERROR: {outname}: {e}")
+
+          # Report
           if produced:
-              print("Produced files:")
-              for x in produced:
-                  print(" -", x)
+              print("Produced .dec.txt files:")
+              for f in produced:
+                  print(" -", f)
           else:
-              print("No input files found; no .dec.txt produced.")
+              print("No .txt files found to process (or all were already .dec.txt).")
+
+          if errors:
+              print("\nErrors encountered:", file=sys.stderr)
+              for e in errors[:50]:
+                  print(" -", e, file=sys.stderr)
           PY
 
-      - name: Show produced files (if any)
+      - name: List produced .dec.txt and preview
         run: |
-          ls -l *.dec.txt 2>/dev/null || echo "No .dec.txt files"
-          echo "Preview (first 20 lines) of any .dec.txt files:"
-          for f in *.dec.txt 2>/dev/null; do
-            echo "--- $f ---"
+          shopt -s globstar nullglob
+          files=( **/*.dec.txt )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No .dec.txt files produced."
+            exit 0
+          fi
+          echo "Produced ${#files[@]} .dec.txt files:"
+          for f in "${files[@]}"; do
+            ls -l "$f"
+          done
+          echo ""
+          echo "Preview: first 20 lines of each produced .dec.txt (or until EOF):"
+          for f in "${files[@]}"; do
+            echo "---- $f ----"
             head -n 20 "$f" || true
           done
 
-      - name: Create zip of outputs (only if present)
+      - name: Create demangled_outputs.zip (if any)
         run: |
-          shopt -s nullglob
-          files=( *.dec.txt )
+          shopt -s globstar nullglob
+          files=( **/*.dec.txt )
           if [ ${#files[@]} -gt 0 ]; then
             zip -r demangled_outputs.zip "${files[@]}"
-            echo "Created demangled_outputs.zip with ${#files[@]} files."
+            echo "Created demangled_outputs.zip containing ${#files[@]} files."
           else
             echo "No .dec.txt files to zip."
           fi
@@ -92,4 +113,4 @@ jobs:
           name: demangled-outputs
           path: |
             demangled_outputs.zip
-            *.dec.txt
+            **/*.dec.txt
