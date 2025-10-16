@@ -23,46 +23,68 @@ jobs:
           python -m pip install --upgrade pip
           pip install cxxfilt
 
-      - name: Demangle files and produce .dec.txt
+      - name: Demangle files (produce .dec.txt)
         run: |
-          cat > demangle.py <<'PY'
-           import re, sys
-           from pathlib import Path
-           import cxxfilt
-           files = [
-             "7.0gui.arm64.txt",
-             "7.0gui.arm32.txt",
-             "7.0ui.arm32.txt",
-             "7.0ui.arm64.txt"
-           ]
-          pattern = re.compile(r'(_Z[\w\d_@:\.\$\-\<\>]+)')
-          out_files = []
-           for fname in files:
-              p = Path(fname)
-           if not p.is_file():
-            continue
-           text = p.read_text(encoding='utf-8', errors='ignore')
-           matches = [m.group(1) for m in pattern.finditer(text)]
-           outname = p.with_name(p.stem + ".dec.txt")
-           out_files.append(str(outname))
-          with outname.open("w", encoding='utf-8', errors='ignore') as f:
-          for m in matches:
-            try:
-                dem = cxxfilt.demangle(m)
-            except Exception as e:
-                dem = f"<demangle_error:{e}>"
-                f.write(f"{m}={dem}\n")
-                if not out_files:
-                print("No input files found; nothing produced.", file=sys.stderr)
-                sys.exit(0)
-                print("Produced:", out_files)
-                PY
-                python demangle.py
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          import cxxfilt
 
-      - name: Create zip of outputs
+          # input file candidates (in repository root)
+          files = [
+              "7.0gui.arm64.txt",
+              "7.0gui.arm32.txt",
+              "7.0ui.arm32.txt",
+              "7.0ui.arm64.txt",
+          ]
+
+          # regex to capture likely Itanium mangled names starting with _Z
+          pattern = re.compile(r'(_Z[^\s,;()\[\]"\']+)')
+
+          produced = []
+          for fname in files:
+              p = Path(fname)
+              if not p.is_file():
+                  continue
+              text = p.read_text(encoding='utf-8', errors='ignore')
+              matches = [m.group(1) for m in pattern.finditer(text)]
+              outname = p.with_suffix('.dec.txt')  # e.g. 7.0gui.arm64.dec.txt
+              with outname.open('w', encoding='utf-8', errors='ignore') as fo:
+                  for m in matches:
+                      try:
+                          dem = cxxfilt.demangle(m)
+                      except Exception as e:
+                          dem = f"<demangle_error:{e}>"
+                      fo.write(f"{m}={dem}\n")
+              produced.append(str(outname))
+
+          if produced:
+              print("Produced files:")
+              for x in produced:
+                  print(" -", x)
+          else:
+              print("No input files found; no .dec.txt produced.")
+          PY
+
+      - name: Show produced files (if any)
         run: |
-          ls -1 *.dec.txt 2>/dev/null || true
-          zip -r demangled_outputs.zip *.dec.txt || true
+          ls -l *.dec.txt 2>/dev/null || echo "No .dec.txt files"
+          echo "Preview (first 20 lines) of any .dec.txt files:"
+          for f in *.dec.txt 2>/dev/null; do
+            echo "--- $f ---"
+            head -n 20 "$f" || true
+          done
+
+      - name: Create zip of outputs (only if present)
+        run: |
+          shopt -s nullglob
+          files=( *.dec.txt )
+          if [ ${#files[@]} -gt 0 ]; then
+            zip -r demangled_outputs.zip "${files[@]}"
+            echo "Created demangled_outputs.zip with ${#files[@]} files."
+          else
+            echo "No .dec.txt files to zip."
+          fi
 
       - name: Upload artifact (zip + .dec.txt)
         uses: actions/upload-artifact@v4
