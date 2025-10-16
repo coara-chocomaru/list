@@ -53,12 +53,14 @@ jobs:
               outname = p.with_name(p.stem + '.dec.txt')
               try:
                   with outname.open('w', encoding='utf-8', errors='ignore') as fo:
+                      fo.write("Mangled Name | Demangled Name\n")
+                      fo.write("------------- | --------------\n")
                       for m in matches:
                           try:
                               dem = cxxfilt.demangle(m)
                           except Exception as e:
-                              dem = f"<demangle_error:{e}>"
-                          fo.write(f"{m}={dem}\n")
+                              dem = f"<demangle_error: {e}>"
+                          fo.write(f"{m} | {dem}\n")
                   produced.append(str(outname))
               except Exception as e:
                   errors.append(f"WRITE_ERROR: {outname}: {e}")
@@ -107,10 +109,8 @@ jobs:
             echo "No .dec.txt files to zip."
           fi
 
-      - name: Upload artifact (zip + .dec.txt)
+      - name: Upload artifact (zip only to avoid duplication)
         uses: actions/upload-artifact@v4
         with:
           name: demangled-outputs
-          path: |
-            demangled_outputs.zip
-            **/*.dec.txt
+          path: demangled_outputs.zip
