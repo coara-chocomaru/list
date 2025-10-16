@@ -1,4 +1,4 @@
-name: Demangle all TXT and upload artifacts
+name: Demangle
 
 on:
   workflow_dispatch:
